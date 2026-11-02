@@ -1,0 +1,343 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenSky | Histórico aéreo</title>
+
+    <link rel="stylesheet"
+          href="{{ url_for('static', filename='style.css') }}">
+
+    <style>
+        .history-panel {
+            padding: 28px;
+            margin-bottom: 24px;
+        }
+
+        .history-chart {
+            width: 100%;
+            overflow: hidden;
+        }
+
+        .history-chart svg {
+            display: block;
+            width: 100%;
+            height: auto;
+        }
+
+        .chart-line {
+            fill: none;
+            stroke: #22c7b8;
+            stroke-width: 3;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+
+        .chart-point {
+            fill: #22c7b8;
+            transition: r .15s ease;
+        }
+
+        .chart-point-group {
+            cursor: pointer;
+            outline: none;
+        }
+
+        .chart-point-group:hover .chart-point,
+        .chart-point-group:focus .chart-point {
+            r: 8;
+        }
+
+        .chart-hit-area {
+            fill: transparent;
+            pointer-events: all;
+        }
+
+        .chart-tooltip {
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity .15s ease;
+        }
+
+        .chart-point-group:hover .chart-tooltip,
+        .chart-point-group:focus .chart-tooltip {
+            opacity: 1;
+        }
+
+        .chart-tooltip rect {
+            fill: #233249;
+            stroke: #22c7b8;
+            stroke-width: 1;
+        }
+
+        .chart-tooltip text {
+            fill: #ffffff;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .chart-grid {
+            stroke: #64748b;
+            stroke-opacity: .22;
+        }
+
+        .chart-label {
+            fill: #94a3b8;
+            font-size: 12px;
+        }
+
+        .history-footer {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            flex-wrap: wrap;
+            color: #94a3b8;
+            font-size: .9rem;
+            margin-top: 18px;
+        }
+
+        .empty-history {
+            padding: 40px 10px;
+            text-align: center;
+            color: #94a3b8;
+        }
+
+        @media (max-width: 600px) {
+            .history-panel {
+                padding: 16px;
+            }
+
+            .chart-label {
+                font-size: 10px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="dashboard">
+        <header class="topbar">
+            <div class="brand">
+                <div class="brand-icon">✈</div>
+                <div>
+                    <h1>OpenSky</h1>
+                    <p>Histórico de actividad aérea</p>
+                </div>
+            </div>
+
+            <div class="status">
+                <span class="status-dot"></span>
+                Histórico · 7 días
+            </div>
+        </header>
+
+        <main>
+            <section class="welcome">
+                <div>
+                    <p class="eyebrow">CENTRO DE OPERACIONES</p>
+                    <h2>Evolución del tráfico aéreo</h2>
+                    <p class="subtitle">
+                        Consulta la evolución del tráfico y de la velocidad
+                        media a partir de las capturas históricas.
+                    </p>
+                </div>
+            </section>
+
+            <!-- GRÁFICA 1: NÚMERO DE AVIONES -->
+            <section class="panel history-panel">
+                <div class="panel-header">
+                    <div>
+                        <p class="eyebrow">HISTÓRICO 01</p>
+                        <h3>Evolución del número de aviones</h3>
+                    </div>
+                    <span class="record-count">
+                        {{ capturas_aviones }} capturas
+                    </span>
+                </div>
+
+                {% if puntos_aviones %}
+                <div class="history-chart">
+                    <svg viewBox="0 0 800 300"
+                         role="img"
+                         aria-label="Histórico del número de aviones">
+
+                        {% for nivel in range(5) %}
+                        <line class="chart-grid"
+                              x1="55"
+                              y1="{{ 35 + nivel * 57.5 }}"
+                              x2="745"
+                              y2="{{ 35 + nivel * 57.5 }}"/>
+                        {% endfor %}
+
+                        {% if puntos_aviones|length > 1 %}
+                        <polyline class="chart-line"
+                                  points="{{ linea_aviones }}"/>
+                        {% endif %}
+
+                        {% for punto in puntos_aviones %}
+                        <g class="chart-point-group"
+                           tabindex="0"
+                           role="img"
+                           aria-label="{{ punto.fecha }}: {{ punto.valor }} aviones">
+
+                            <circle class="chart-point"
+                                    cx="{{ punto.x }}"
+                                    cy="{{ punto.y }}"
+                                    r="6"/>
+
+                            <circle class="chart-hit-area"
+                                    cx="{{ punto.x }}"
+                                    cy="{{ punto.y }}"
+                                    r="14"/>
+
+                            <g class="chart-tooltip"
+                               transform="translate({{ punto.x }}, {{ punto.y - 18 }})">
+                                <rect x="-88"
+                                      y="-30"
+                                      width="176"
+                                      height="44"
+                                      rx="8"/>
+
+                                <text x="0"
+                                      y="-13"
+                                      text-anchor="middle">
+                                    {{ punto.valor }} aviones
+                                </text>
+
+                                <text x="0"
+                                      y="3"
+                                      text-anchor="middle">
+                                    {{ punto.fecha }}
+                                </text>
+                            </g>
+                        </g>
+                        {% endfor %}
+
+                        <text class="chart-label" x="55" y="288">
+                            {{ puntos_aviones[0].fecha }}
+                        </text>
+
+                        <text class="chart-label"
+                              x="745"
+                              y="288"
+                              text-anchor="end">
+                            {{ puntos_aviones[-1].fecha }}
+                        </text>
+                    </svg>
+                </div>
+
+                <div class="history-footer">
+                    <span>Mínimo: {{ minimo_aviones }} aviones</span>
+                    <span>Máximo: {{ maximo_aviones }} aviones</span>
+                </div>
+                {% else %}
+                <div class="empty-history">
+                    Todavía no hay capturas históricas de aviones.
+                </div>
+                {% endif %}
+            </section>
+
+            <!-- GRÁFICA 2: VELOCIDAD MEDIA -->
+            <section class="panel history-panel">
+                <div class="panel-header">
+                    <div>
+                        <p class="eyebrow">HISTÓRICO 02</p>
+                        <h3>Evolución de la velocidad media</h3>
+                    </div>
+                    <span class="record-count">
+                        {{ capturas_velocidad }} capturas
+                    </span>
+                </div>
+
+                {% if puntos_velocidad %}
+                <div class="history-chart">
+                    <svg viewBox="0 0 800 300"
+                         role="img"
+                         aria-label="Histórico de la velocidad media">
+
+                        {% for nivel in range(5) %}
+                        <line class="chart-grid"
+                              x1="55"
+                              y1="{{ 35 + nivel * 57.5 }}"
+                              x2="745"
+                              y2="{{ 35 + nivel * 57.5 }}"/>
+                        {% endfor %}
+
+                        {% if puntos_velocidad|length > 1 %}
+                        <polyline class="chart-line"
+                                  points="{{ linea_velocidad }}"/>
+                        {% endif %}
+
+                        {% for punto in puntos_velocidad %}
+                        <g class="chart-point-group"
+                           tabindex="0"
+                           role="img"
+                           aria-label="{{ punto.fecha }}: velocidad media {{ punto.valor }}">
+
+                            <circle class="chart-point"
+                                    cx="{{ punto.x }}"
+                                    cy="{{ punto.y }}"
+                                    r="6"/>
+
+                            <circle class="chart-hit-area"
+                                    cx="{{ punto.x }}"
+                                    cy="{{ punto.y }}"
+                                    r="14"/>
+
+                            <g class="chart-tooltip"
+                               transform="translate({{ punto.x }}, {{ punto.y - 18 }})">
+                                <rect x="-88"
+                                      y="-30"
+                                      width="176"
+                                      height="44"
+                                      rx="8"/>
+
+                                <text x="0"
+                                      y="-13"
+                                      text-anchor="middle">
+                                    Media: {{ punto.valor }}
+                                </text>
+
+                                <text x="0"
+                                      y="3"
+                                      text-anchor="middle">
+                                    {{ punto.fecha }}
+                                </text>
+                            </g>
+                        </g>
+                        {% endfor %}
+
+                        <text class="chart-label" x="55" y="288">
+                            {{ puntos_velocidad[0].fecha }}
+                        </text>
+
+                        <text class="chart-label"
+                              x="745"
+                              y="288"
+                              text-anchor="end">
+                            {{ puntos_velocidad[-1].fecha }}
+                        </text>
+                    </svg>
+                </div>
+
+                <div class="history-footer">
+                    <span>Mínimo: {{ minimo_velocidad }}</span>
+                    <span>Máximo: {{ maximo_velocidad }}</span>
+                </div>
+                {% else %}
+                <div class="empty-history">
+                    Todavía no hay datos históricos de velocidad.
+                    Se mostrarán cuando el servicio guarde las primeras capturas.
+                </div>
+                {% endif %}
+            </section>
+
+            <footer>
+                <span>OPENSKY DASHBOARD</span>
+                <span>Histórico · PostgreSQL · Flask</span>
+            </footer>
+        </main>
+    </div>
+</body>
+</html>

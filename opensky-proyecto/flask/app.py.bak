@@ -1,0 +1,206 @@
+import os
+import psycopg
+from flask import Flask
+from influxdb_client import InfluxDBClient
+
+app = Flask(__name__)
+
+def sincronizar_estadisticas():
+    cliente = InfluxDBClient(
+        url=os.environ["INFLUX_URL"],
+        token=os.environ["INFLUX_TOKEN"],
+        org=os.environ["INFLUX_ORG"],
+    )
+
+    consulta = """
+        from(bucket: "aviones")
+            |> range(start: -15m)
+            |> filter(fn: (r) =>
+                r._field == "velocidad" or r._field == "altitud"
+            )
+            |> group(columns: ["_field", "icao24", "pais"])
+            |> last()
+    """
+
+    try:
+        tablas = cliente.query_api().query(consulta)
+        aviones = {}
+
+        for tabla in tablas:
+            for registro in tabla.records:
+                icao24 = registro.values.get("icao24")
+                pais = registro.values.get("pais")
+                campo = registro.get_field()
+                valor = registro.get_value()
+
+                if not icao24 or not pais or valor is None:
+                    continue
+
+                clave = (pais, icao24)
+
+                if clave not in aviones:
+                    aviones[clave] = {
+                        "velocidad": None,
+                        "altitud": None,
+                    }
+
+                if campo == "velocidad":
+                    aviones[clave]["velocidad"] = valor
+                elif campo == "altitud":
+                    aviones[clave]["altitud"] = valor
+
+    finally:
+        cliente.close()
+
+    estadisticas = {}
+
+    for (pais, icao24), datos in aviones.items():
+        if pais not in estadisticas:
+            estadisticas[pais] = {
+                "total": 0,
+                "velocidades": [],
+                "altitudes": [],
+            }
+
+        estadisticas[pais]["total"] += 1
+
+        if datos["velocidad"] is not None:
+            estadisticas[pais]["velocidades"].append(
+                datos["velocidad"]
+            )
+
+        if datos["altitud"] is not None:
+            estadisticas[pais]["altitudes"].append(
+                datos["altitud"]
+            )
+
+    if not estadisticas:
+        raise RuntimeError(
+            "No se han encontrado estadísticas en InfluxDB."
+        )
+
+    conexion = psycopg.connect(
+        host=os.environ["DB_HOST"],
+        port=os.environ["DB_PORT"],
+        dbname=os.environ["DB_NAME"],
+        user=os.environ["DB_USER"],
+        password=os.environ["DB_PASSWORD"],
+    )
+
+    try:
+        with conexion.cursor() as cursor:
+            for pais, datos in estadisticas.items():
+                velocidad_media = (
+                    sum(datos["velocidades"])
+                    / len(datos["velocidades"])
+                    if datos["velocidades"] else None
+                )
+
+                altitud_media = (
+                    sum(datos["altitudes"])
+                    / len(datos["altitudes"])
+                    if datos["altitudes"] else None
+                )
+
+                cursor.execute(
+                    """
+                    INSERT INTO paises (nombre)
+                    VALUES (%s)
+                    ON CONFLICT (nombre) DO NOTHING;
+                    """,
+                    (pais,),
+                )
+
+                cursor.execute(
+                    """
+                    INSERT INTO estadisticas_pais (
+                        pais_id,
+                        total_aviones,
+                        velocidad_media,
+                        altitud_media,
+                        fecha_actualizacion
+                    )
+                    SELECT id, %s, %s, %s, CURRENT_TIMESTAMP
+                    FROM paises
+                    WHERE nombre = %s
+                    ON CONFLICT (pais_id)
+                    DO UPDATE SET
+                        total_aviones = EXCLUDED.total_aviones,
+                        velocidad_media = EXCLUDED.velocidad_media,
+                        altitud_media = EXCLUDED.altitud_media,
+                        fecha_actualizacion = CURRENT_TIMESTAMP;
+                    """,
+                    (
+                        datos["total"],
+                        velocidad_media,
+                        altitud_media,
+                        pais,
+                    ),
+                )
+
+        conexion.commit()
+    finally:
+        conexion.close()
+
+def obtener_estadisticas():
+    conexion = psycopg.connect(
+        host=os.environ["DB_HOST"],
+        port=os.environ["DB_PORT"],
+        dbname=os.environ["DB_NAME"],
+        user=os.environ["DB_USER"],
+        password=os.environ["DB_PASSWORD"],
+    )
+
+    try:
+        with conexion.cursor() as cursor:
+            cursor.execute("""
+                SELECT
+                    p.nombre,
+                    e.total_aviones,
+                    e.velocidad_media,
+                    e.altitud_media,
+                    e.fecha_actualizacion
+                FROM paises p
+                JOIN estadisticas_pais e ON p.id = e.pais_id
+                ORDER BY p.nombre;
+            """)
+            return cursor.fetchall()
+    finally:
+        conexion.close()
+
+
+@app.route("/")
+def inicio():
+    sincronizar_estadisticas()
+    estadisticas = obtener_estadisticas()
+
+    filas = ""
+    for pais, total, velocidad, altitud, fecha in estadisticas:
+        filas += f"""
+            <tr>
+                <td>{pais}</td>
+                <td>{total}</td>
+                <td>{velocidad}</td>
+                <td>{altitud}</td>
+                <td>{fecha}</td>
+            </tr>
+        """
+
+    return f"""
+        <h1>OpenSky Dashboard</h1>
+        <p>Estadísticas consultadas desde PostgreSQL.</p>
+        <table border="1" cellpadding="8">
+            <tr>
+                <th>País</th>
+                <th>Total de aviones</th>
+                <th>Velocidad media</th>
+                <th>Altitud media</th>
+                <th>Última actualización</th>
+            </tr>
+            {filas}
+        </table>
+    """
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=False)
